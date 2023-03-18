@@ -6,6 +6,7 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"log"
 	"sync"
+	"time"
 )
 
 type broadcastBody struct {
@@ -78,9 +79,24 @@ func storeAndBroadcastMessage(s *server, body broadcastBody, msg maelstrom.Messa
 		s.numbers = append(s.numbers, body.Message)
 		s.numberLock.Unlock()
 		for _, dest := range s.topology[msg.Dest] {
-			_, _ = s.n.SyncRPC(context.Background(), dest, body)
+			go broadcastWhileTimeout(s, dest, body)
 		}
 	}
+}
+
+func broadcastWhileTimeout(s *server, dest string, body broadcastBody) {
+	for {
+		if broadcast(s, dest, body) == nil {
+			break
+		}
+	}
+}
+
+func broadcast(s *server, dest string, body broadcastBody) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := s.n.SyncRPC(ctx, dest, body)
+	return err
 }
 
 func isMessageExisted(numbers []float64, message float64) bool {
