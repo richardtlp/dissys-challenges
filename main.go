@@ -19,9 +19,12 @@ type topologyBody struct {
 	Topology map[string][]string `json:"topology"`
 }
 
+var member struct{}
+
 type server struct {
-	numbers  []float64
-	topology map[string][]string
+	numbers    []float64
+	setNumbers map[float64]struct{}
+	topology   map[string][]string
 
 	n          *maelstrom.Node
 	numberLock sync.RWMutex
@@ -30,6 +33,7 @@ type server struct {
 func main() {
 	s := server{
 		numbers:    make([]float64, 0),
+		setNumbers: make(map[float64]struct{}),
 		topology:   make(map[string][]string),
 		n:          maelstrom.NewNode(),
 		numberLock: sync.RWMutex{},
@@ -74,14 +78,26 @@ func (s *server) broadcastHandler(msg maelstrom.Message) error {
 }
 
 func storeAndBroadcastMessage(s *server, body broadcastBody, msg maelstrom.Message) {
-	if !isMessageExisted(s.numbers, body.Message) {
-		s.numberLock.Lock()
-		s.numbers = append(s.numbers, body.Message)
-		s.numberLock.Unlock()
+	if !isMessageExisted(s, body.Message) {
+		storeMessage(s, body)
 		for _, dest := range s.topology[msg.Dest] {
 			go broadcastWhileTimeout(s, dest, body)
 		}
 	}
+}
+
+func isMessageExisted(s *server, message float64) bool {
+	s.numberLock.RLock()
+	_, ok := s.setNumbers[message]
+	s.numberLock.RUnlock()
+	return ok
+}
+
+func storeMessage(s *server, body broadcastBody) {
+	s.numberLock.Lock()
+	s.numbers = append(s.numbers, body.Message)
+	s.setNumbers[body.Message] = member
+	s.numberLock.Unlock()
 }
 
 func broadcastWhileTimeout(s *server, dest string, body broadcastBody) {
@@ -97,13 +113,4 @@ func broadcast(s *server, dest string, body broadcastBody) error {
 	defer cancel()
 	_, err := s.n.SyncRPC(ctx, dest, body)
 	return err
-}
-
-func isMessageExisted(numbers []float64, message float64) bool {
-	for _, num := range numbers {
-		if num == message {
-			return true
-		}
-	}
-	return false
 }
