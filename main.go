@@ -81,7 +81,9 @@ func storeAndBroadcastMessage(s *server, body broadcastBody, msg maelstrom.Messa
 	if !isMessageExisted(s, body.Message) {
 		storeMessage(s, body)
 		for _, dest := range s.topology[msg.Dest] {
-			go broadcastWhileTimeout(s, dest, body)
+			if dest != msg.Src {
+				go broadcastWhileTimeout(s, dest, body)
+			}
 		}
 	}
 }
