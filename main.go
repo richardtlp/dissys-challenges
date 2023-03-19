@@ -21,17 +21,19 @@ type server struct {
 	setNumbers map[float64]struct{}
 	topology   map[string][]string
 
-	n          *maelstrom.Node
-	numberLock sync.RWMutex
+	n             *maelstrom.Node
+	numberLock    sync.RWMutex
+	setNumberLock sync.RWMutex
 }
 
 func main() {
 	s := server{
-		numbers:    make([]float64, 0),
-		setNumbers: make(map[float64]struct{}),
-		topology:   make(map[string][]string),
-		n:          maelstrom.NewNode(),
-		numberLock: sync.RWMutex{},
+		numbers:       make([]float64, 0),
+		setNumbers:    make(map[float64]struct{}),
+		topology:      make(map[string][]string),
+		n:             maelstrom.NewNode(),
+		numberLock:    sync.RWMutex{},
+		setNumberLock: sync.RWMutex{},
 	}
 
 	s.n.Handle("read", s.readHandler)
@@ -86,17 +88,27 @@ func (s *server) storeAndBroadcastMessage(body broadcastBody, msg maelstrom.Mess
 }
 
 func (s *server) isMessageExisted(message float64) bool {
-	s.numberLock.RLock()
+	s.setNumberLock.RLock()
 	_, ok := s.setNumbers[message]
-	s.numberLock.RUnlock()
+	s.setNumberLock.RUnlock()
 	return ok
 }
 
 func (s *server) storeMessage(body broadcastBody) {
+	s.storeToInternalArray(body.Message)
+	s.storeToSet(body.Message)
+}
+
+func (s *server) storeToInternalArray(message float64) {
 	s.numberLock.Lock()
-	s.numbers = append(s.numbers, body.Message)
-	s.setNumbers[body.Message] = member
+	s.numbers = append(s.numbers, message)
 	s.numberLock.Unlock()
+}
+
+func (s *server) storeToSet(message float64) {
+	s.setNumberLock.Lock()
+	s.setNumbers[message] = member
+	s.setNumberLock.Unlock()
 }
 
 func (s *server) broadcastWhileTimeout(dest string, body broadcastBody) {
