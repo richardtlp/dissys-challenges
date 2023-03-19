@@ -14,11 +14,6 @@ type broadcastBody struct {
 	Message float64 `json:"message"`
 }
 
-type topologyBody struct {
-	Type     string              `json:"type,omitempty"`
-	Topology map[string][]string `json:"topology"`
-}
-
 var member struct{}
 
 type server struct {
@@ -60,11 +55,13 @@ func (s *server) readHandler(msg maelstrom.Message) error {
 }
 
 func (s *server) topologyHandler(msg maelstrom.Message) error {
-	var body topologyBody
-	if err := json.Unmarshal(msg.Body, &body); err != nil {
-		return err
+	if len(s.n.NodeIDs()) != 0 {
+		bridge := s.n.NodeIDs()[0]
+		s.topology[bridge] = s.n.NodeIDs()[1:]
+		for _, node := range s.n.NodeIDs()[1:] {
+			s.topology[node] = []string{bridge}
+		}
 	}
-	s.topology = body.Topology
 	return s.n.Reply(msg, map[string]any{"type": "topology_ok"})
 }
 
