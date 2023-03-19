@@ -73,44 +73,44 @@ func (s *server) broadcastHandler(msg maelstrom.Message) error {
 	if err := json.Unmarshal(msg.Body, &body); err != nil {
 		return err
 	}
-	go storeAndBroadcastMessage(s, body, msg)
+	go s.storeAndBroadcastMessage(body, msg)
 	return s.n.Reply(msg, map[string]any{"type": "broadcast_ok"})
 }
 
-func storeAndBroadcastMessage(s *server, body broadcastBody, msg maelstrom.Message) {
-	if !isMessageExisted(s, body.Message) {
-		storeMessage(s, body)
+func (s *server) storeAndBroadcastMessage(body broadcastBody, msg maelstrom.Message) {
+	if !s.isMessageExisted(body.Message) {
+		s.storeMessage(body)
 		for _, dest := range s.topology[msg.Dest] {
 			if dest != msg.Src {
-				go broadcastWhileTimeout(s, dest, body)
+				go s.broadcastWhileTimeout(dest, body)
 			}
 		}
 	}
 }
 
-func isMessageExisted(s *server, message float64) bool {
+func (s *server) isMessageExisted(message float64) bool {
 	s.numberLock.RLock()
 	_, ok := s.setNumbers[message]
 	s.numberLock.RUnlock()
 	return ok
 }
 
-func storeMessage(s *server, body broadcastBody) {
+func (s *server) storeMessage(body broadcastBody) {
 	s.numberLock.Lock()
 	s.numbers = append(s.numbers, body.Message)
 	s.setNumbers[body.Message] = member
 	s.numberLock.Unlock()
 }
 
-func broadcastWhileTimeout(s *server, dest string, body broadcastBody) {
+func (s *server) broadcastWhileTimeout(dest string, body broadcastBody) {
 	for {
-		if broadcast(s, dest, body) == nil {
+		if s.broadcast(dest, body) == nil {
 			break
 		}
 	}
 }
 
-func broadcast(s *server, dest string, body broadcastBody) error {
+func (s *server) broadcast(dest string, body broadcastBody) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, err := s.n.SyncRPC(ctx, dest, body)
