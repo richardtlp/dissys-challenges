@@ -17,23 +17,24 @@ type broadcastBody struct {
 var member struct{}
 
 type server struct {
-	numbers    []float64
-	setNumbers map[float64]struct{}
-	topology   map[string][]string
+	messages     map[float64]struct{}
+	messagesLock sync.RWMutex
 
-	n             *maelstrom.Node
-	numberLock    sync.RWMutex
-	setNumberLock sync.RWMutex
+	topology map[string][]string
+
+	n *maelstrom.Node
 }
+
+const MaxRetry = 100
 
 func main() {
 	s := server{
-		numbers:       make([]float64, 0),
-		setNumbers:    make(map[float64]struct{}),
-		topology:      make(map[string][]string),
-		n:             maelstrom.NewNode(),
-		numberLock:    sync.RWMutex{},
-		setNumberLock: sync.RWMutex{},
+		messages:     make(map[float64]struct{}),
+		messagesLock: sync.RWMutex{},
+
+		topology: make(map[string][]string),
+
+		n: maelstrom.NewNode(),
 	}
 
 	s.n.Handle("read", s.readHandler)
@@ -50,13 +51,24 @@ func (s *server) readHandler(msg maelstrom.Message) error {
 	if err := json.Unmarshal(msg.Body, &body); err != nil {
 		return err
 	}
-	s.numberLock.RLock()
-	reply := map[string]any{"type": "read_ok", "messages": s.numbers}
-	s.numberLock.RUnlock()
-	return s.n.Reply(msg, reply)
+	return s.n.Reply(msg, s.createReplyFromMessages())
+}
+
+func (s *server) createReplyFromMessages() map[string]any {
+	s.messagesLock.RLock()
+	defer s.messagesLock.RUnlock()
+
+	messagesSlice := make([]float64, 0)
+	for key := range s.messages {
+		messagesSlice = append(messagesSlice, key)
+	}
+	return map[string]any{"type": "read_ok", "messages": messagesSlice}
 }
 
 func (s *server) topologyHandler(msg maelstrom.Message) error {
+	// define the custom topology: node 0 connects to all other nodes
+	// reason: it takes at most 2 hops for a message to be broadcast between any two nodes
+	// and on average, each node will send 2 message per broadcast operation
 	if len(s.n.NodeIDs()) != 0 {
 		bridge := s.n.NodeIDs()[0]
 		s.topology[bridge] = s.n.NodeIDs()[1:]
@@ -87,34 +99,12 @@ func (s *server) storeAndBroadcastMessage(body broadcastBody, msg maelstrom.Mess
 	}
 }
 
-func (s *server) isMessageExisted(message float64) bool {
-	s.setNumberLock.RLock()
-	_, ok := s.setNumbers[message]
-	s.setNumberLock.RUnlock()
-	return ok
-}
-
-func (s *server) storeMessage(body broadcastBody) {
-	s.storeToInternalArray(body.Message)
-	s.storeToSet(body.Message)
-}
-
-func (s *server) storeToInternalArray(message float64) {
-	s.numberLock.Lock()
-	s.numbers = append(s.numbers, message)
-	s.numberLock.Unlock()
-}
-
-func (s *server) storeToSet(message float64) {
-	s.setNumberLock.Lock()
-	s.setNumbers[message] = member
-	s.setNumberLock.Unlock()
-}
-
 func (s *server) broadcastWhileTimeout(dest string, body broadcastBody) {
-	for {
+	for i := 0; i < MaxRetry; i++ {
 		if s.broadcast(dest, body) == nil {
 			break
+		} else {
+			time.Sleep(time.Second) // avoid putting too much pressure on the failed node
 		}
 	}
 }
@@ -122,6 +112,22 @@ func (s *server) broadcastWhileTimeout(dest string, body broadcastBody) {
 func (s *server) broadcast(dest string, body broadcastBody) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+
 	_, err := s.n.SyncRPC(ctx, dest, body)
 	return err
+}
+
+func (s *server) isMessageExisted(message float64) bool {
+	s.messagesLock.RLock()
+	defer s.messagesLock.RUnlock()
+
+	_, ok := s.messages[message]
+	return ok
+}
+
+func (s *server) storeMessage(body broadcastBody) {
+	s.messagesLock.Lock()
+	defer s.messagesLock.Unlock()
+
+	s.messages[body.Message] = member
 }
